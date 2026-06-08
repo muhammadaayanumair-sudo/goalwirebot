@@ -541,9 +541,28 @@ async def poll(interaction: discord.Interaction, question: str):
     await msg.add_reaction("👎")
     await interaction.followup.send("Poll created!", ephemeral=True)
 
-# ===== 23. WHOAMI =====
+# ===== 23. WHOAMI - FIXED =====
 @bot.tree.command(name="whoami", description="Who are you?")
 async def whoami(interaction: discord.Interaction):
     await interaction.response.defer()
     embed = discord.Embed(title="🤔 Who Am I?", description="I'm GoalWire, your football companion bot!", color=0xff00ff)
-    embed.add_field(name="Commands", value="24
+    embed.add_field(name="Commands", value="24/24 Working") # THIS LINE WAS BROKEN BEFORE
+    embed.add_field(name="Teams", value="200+ instant, 5000+ total")
+    embed.add_field(name="Trivia", value="25 questions, no repeats")
+    embed.add_field(name="Cost", value="$0/month")
+    await interaction.followup.send(embed=embed)
+
+# ===== 24. HELP =====
+@bot.tree.command(name="help", description="Show all commands")
+async def help(interaction: discord.Interaction):
+    await interaction.response.defer()
+    embed = discord.Embed(title="⚽ GoalWire Commands", color=0x00ff00)
+    embed.add_field(name="📊 Live Data", value="`/livescore` `/fixtures` `/result` `/standings` `/scorers`", inline=False)
+    embed.add_field(name="🔍 Search", value="`/team` `/teamsearch` `/scout` `/h2h`", inline=False)
+    embed.add_field(name="🎮 Fun", value="`/trivia` `/banter` `/poll` `/predict`", inline=False)
+    embed.add_field(name="🏆 FPL", value="`/fpllink` `/myfpl` `/fplplayer` `/fplleague`", inline=False)
+    embed.add_field(name="⚙️ Setup", value="`/setchannel` `/alert` `/botinfo` `/whoami`", inline=False)
+    embed.set_footer(text="Use dropdowns for instant team results!")
+    await interaction.followup.send(embed=embed)
+
+bot.run(TOKEN)
