@@ -292,9 +292,10 @@ async def result(interaction: discord.Interaction, league: str):
     await interaction.response.defer()
     data = await football_api(f"competitions/{league}/matches?status=FINISHED&limit=5")
     embed = discord.Embed(title=f"✅ {league} Results", color=0x00FF00)
-    matches = data.get("matches", [])
-if not matches:
-    embed.description = "No recent finished matches (offseason). Try /fixtures for next season."
+    matches = data.get("matches", [])[-5:]
+    if not matches:
+        embed.description = "No recent finished matches (offseason)"
+    for m in reversed(matches):
         score = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
         embed.add_field(name=f"{m['homeTeam']['shortName']} {score} {m['awayTeam']['shortName']}", value="FT", inline=False)
     await interaction.followup.send(embed=embed)
