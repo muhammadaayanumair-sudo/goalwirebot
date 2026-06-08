@@ -13,7 +13,7 @@ STATUS_EMOJI = {
 }
 
 LEAGUE_EMOJI = {
-    "PL":  "🏴󠁧🇬🇧",
+    "PL":  "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
     "BL1": "🇩🇪",
     "SA":  "🇮🇹",
     "PD":  "🇪🇸",
