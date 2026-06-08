@@ -292,7 +292,9 @@ async def result(interaction: discord.Interaction, league: str):
     await interaction.response.defer()
     data = await football_api(f"competitions/{league}/matches?status=FINISHED&limit=5")
     embed = discord.Embed(title=f"✅ {league} Results", color=0x00FF00)
-    for m in reversed(data.get("matches", [])[-5:]):
+    matches = data.get("matches", [])
+if not matches:
+    embed.description = "No recent finished matches (offseason). Try /fixtures for next season."
         score = f"{m['score']['fullTime']['home']}-{m['score']['fullTime']['away']}"
         embed.add_field(name=f"{m['homeTeam']['shortName']} {score} {m['awayTeam']['shortName']}", value="FT", inline=False)
     await interaction.followup.send(embed=embed)
@@ -334,9 +336,12 @@ async def news(interaction: discord.Interaction):
 @app_commands.autocomplete(team=team_autocomplete)
 async def transfers(interaction: discord.Interaction, team: str = None):
     await interaction.response.defer()
-    msg = f"🔄 Transfers for {team}" if team else "🔄 Latest transfers - window is open!"
-    await interaction.followup.send(msg)
-
+    # football-data doesn't have transfers, so we fake with news API or return link
+    team_id = TEAM_IDS.get(team.lower()) if team else None
+    if team_id:
+        await interaction.followup.send(f"🔄 Latest {team.title()} transfers: https://www.transfermarkt.us/schnellsuche/ergebnis/schnellsuche?query={team.replace(' ', '+')}")
+    else:
+        await interaction.followup.send("🔄 Transfer window: Check https://www.transfermarkt.us")
 @bot.tree.command(name="banter", description="Random football banter")
 async def banter(interaction: discord.Interaction):
     await interaction.response.defer()
