@@ -1,184 +1,275 @@
-import os
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from dotenv import load_dotenv
-import aiohttp
 import aiosqlite
-import asyncio
+import os
+import aiohttp
 from openai import AsyncOpenAI
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import datetime
-import time
+from datetime import datetime
 
-load_dotenv()
+# ===== ENV VARIABLES =====
 TOKEN = os.getenv("DISCORD_TOKEN")
-FOOTBALL_KEY = os.getenv("FOOTBALL_API_KEY")
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-LEAGUES = [39,140,78,135,61,2] # EPL, La Liga, Bundesliga, Serie A, Ligue 1, UCL
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+# ===== BOT SETUP =====
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-openai_client = AsyncOpenAI(api_key=OPENAI_KEY)
-api_cache = {}
 
 # ===== DATABASE =====
-async def setup_db():
-    bot.db = await aiosqlite.connect("bot.db")
-    await bot.db.execute("CREATE TABLE IF NOT EXISTS settings (guild_id INTEGER PRIMARY KEY, channel_id INTEGER)")
-    await bot.db.commit()
+async def init_db():
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS guild_channels (
+                guild_id INTEGER,
+                feature TEXT,
+                channel_id INTEGER,
+                PRIMARY KEY (guild_id, feature)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                guild_id INTEGER,
+                user_id INTEGER,
+                match_id TEXT,
+                alert_type TEXT
+            )
+        """)
+        await db.commit()
 
-async def save_channel(guild_id, channel_id):
-    await bot.db.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (guild_id, channel_id))
-    await bot.db.commit()
+# ===== HELPER FUNCTIONS =====
+async def get_channel_for_feature(guild_id, feature):
+    async with aiosqlite.connect("database.db") as db:
+        cursor = await db.execute("SELECT channel_id FROM guild_channels WHERE guild_id=? AND feature=?", (guild_id, feature))
+        result = await cursor.fetchone()
+        return result[0] if result else None
 
-async def get_channel_id(guild_id):
-    async with bot.db.execute("SELECT channel_id FROM settings WHERE guild_id=?", (guild_id,)) as cur:
-        row = await cur.fetchone()
-    return row[0] if row else None
+async def football_api_request(endpoint):
+    headers = {"X-Auth-Token": FOOTBALL_API_KEY}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://api.football-data.org/v4/{endpoint}", headers=headers) as resp:
+            return await resp.json()
 
-# ===== FOOTBALL API =====
-async def football_api(endpoint, params):
-    key = f"{endpoint}:{str(params)}"
-    now = time.time()
-    if key in api_cache and now - api_cache[key]["time"] < 300:
-        return api_cache[key]["data"]
-    headers = {"x-apisports-key": FOOTBALL_KEY}
-    async with aiohttp.ClientSession() as s:
-        async with s.get(f"https://v3.football.api-sports.io/{endpoint}", headers=headers, params=params) as r:
-            data = await r.json()
-    api_cache[key] = {"time": now, "data": data}
-    return data
-
-# ===== EMBEDS =====
-def live_embed(f):
-    h,a,g,s = f['teams']['home'], f['teams']['away'], f['goals'], f['fixture']['status']
-    title = f"🔴 LIVE {s['elapsed']}'" if s['short'] in ['1H','2H'] else f"{s['long']}"
-    e = discord.Embed(title=title, description=f"**{h['name']} {g['home']} - {g['away']} {a['name']}**", color=0x00ff00 if s['short']!= 'FT' else 0x95a5a6)
-    e.set_thumbnail(url=h['logo'])
-    e.set_author(name=f['league']['name'], icon_url=f['league']['logo'])
-    return e
-
-def fixtures_embed(data):
-    if not data.get('response'): return None
-    e = discord.Embed(title="Today's Top 5 League Fixtures", color=0x3498db)
-    count = 0
-    for fix in data['response']:
-        if fix['league']['id'] not in LEAGUES or count >= 8: continue
-        time = fix['fixture']['date'][11:16]
-        e.add_field(name=fix['league']['name'], value=f"{fix['teams']['home']['name']} vs {fix['teams']['away']['name']} - {time} UTC", inline=False)
-        count += 1
-    return e if count > 0 else None
-
-# ===== COMMANDS =====
-@bot.tree.command(name="setup", description="Set channel for auto football updates")
-async def setup_cmd(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("Admin only", ephemeral=True)
-    await save_channel(interaction.guild.id, channel.id)
-    e = discord.Embed(title="GoalWire Autopilot Enabled", description=f"Posting to {channel.mention}", color=0x00ff00)
-    e.add_field(name="Auto Features", value="✓ Fixtures 9am GMT\n✓ Live Updates Every 15min\n✓ Top Scorers Monday\n✓ /vs Team Compare\n✓ /compare Players")
-    await interaction.response.send_message(embed=e)
-
-@bot.tree.command(name="vs", description="Compare teams + AI predicts winner")
-async def vs(interaction: discord.Interaction, team1: str, team2: str):
-    await interaction.response.defer()
-    t1 = await football_api("teams", {"search": team1})
-    t2 = await football_api("teams", {"search": team2})
-    if not t1['response'] or not t2['response']:
-        return await interaction.followup.send("Team not found. Use full name like 'Manchester City'")
-    t1_id, t2_id = t1['response'][0]['team']['id'], t2['response'][0]['team']['id']
-    s1 = await football_api("teams/statistics", {"team": t1_id, "league": 39, "season": 2023})
-    s2 = await football_api("teams/statistics", {"team": t2_id, "league": 39, "season": 2023})
-    prompt = f"Team A: {t1['response'][0]['team']['name']}, Form: {s1['response']['form']}, Goals/game: {s1['response']['goals']['for']['average']['total']}. Team B: {t2['response'][0]['team']['name']}, Form: {s2['response']['form']}, Goals/game: {s2['response']['goals']['for']['average']['total']}. Give win % for each + 1 sentence reason. Be a witty UK pundit."
-    res = await openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
-    e = discord.Embed(title=f"{s1['response']['team']['name']} vs {s2['response']['team']['name']}", color=0xe74c3c)
-    e.add_field(name=s1['response']['team']['name'], value=f"Form: {s1['response']['form']}\nGoals/Game: {s1['response']['goals']['for']['average']['total']}", inline=True)
-    e.add_field(name=s2['response']['team']['name'], value=f"Form: {s2['response']['form']}\nGoals/Game: {s2['response']['goals']['for']['average']['total']}", inline=True)
-    e.add_field(name="AI Win Prediction", value=res.choices[0].message.content, inline=False)
-    e.set_thumbnail(url=s1['response']['team']['logo'])
-    await interaction.followup.send(embed=e)
-
-@bot.tree.command(name="compare", description="Compare two players")
-async def compare(interaction: discord.Interaction, player1: str, player2: str):
-    await interaction.response.defer()
-    p1 = await football_api("players", {"search": player1, "league": 39, "season": 2023})
-    p2 = await football_api("players", {"search": player2, "league": 39, "season": 2023})
-    if not p1['response'] or not p2['response']:
-        return await interaction.followup.send("Player not found")
-    s1, s2 = p1['response'][0]['statistics'][0], p2['response'][0]['statistics'][0]
-    e = discord.Embed(title=f"{p1['response'][0]['player']['name']} vs {p2['response'][0]['player']['name']}", color=0x9b59b6)
-    e.add_field(name=p1['response'][0]['player']['name'], value=f"Goals: {s1['goals']['total'] or 0}\nAssists: {s1['goals']['assists'] or 0}\nRating: {s1['games']['rating'] or 'N/A'}", inline=True)
-    e.add_field(name=p2['response'][0]['player']['name'], value=f"Goals: {s2['goals']['total'] or 0}\nAssists: {s2['goals']['assists'] or 0}\nRating: {s2['games']['rating'] or 'N/A'}", inline=True)
-    e.set_thumbnail(url=p1['response'][0]['player']['photo'])
-    await interaction.followup.send(embed=e)
-
-@bot.tree.command(name="live", description="Show all live Top 5 league games")
-async def live(interaction: discord.Interaction):
-    await interaction.response.defer()
-    data = await football_api("fixtures", {"live": "all"})
-    count = 0
-    for fix in data.get('response', []):
-        if fix['league']['id'] in LEAGUES:
-            await interaction.followup.send(embed=live_embed(fix))
-            count += 1
-    if count == 0: await interaction.followup.send("No Top 5 league games live right now")
-
-# ===== AUTO POSTING =====
-scheduler = AsyncIOScheduler()
-
-async def post_fixtures():
-    data = await football_api("fixtures", {"date": datetime.date.today().isoformat(), "status": "NS"})
-    embed = fixtures_embed(data)
-    if not embed: return
-    for guild in bot.guilds:
-        cid = await get_channel_id(guild.id)
-        if cid and (ch := guild.get_channel(cid)): 
-            try: await ch.send(embed=embed)
-            except: pass
-
-async def post_scorers():
-    for guild in bot.guilds:
-        cid = await get_channel_id(guild.id)
-        if not cid: continue
-        ch = guild.get_channel(cid)
-        if not ch: continue
-        for league in [39, 140]:
-            data = await football_api("players/topscorers", {"league": league, "season": 2023})
-            if data.get('response'):
-                names = {39: "EPL", 140: "La Liga"}
-                e = discord.Embed(title=f"{names.get(league)} Top Scorers", color=0xf1c40f)
-                for p in data['response'][:5]:
-                    e.add_field(name=p['player']['name'], value=f"{p['statistics'][0]['goals']['total']} goals", inline=False)
-                try: await ch.send(embed=e)
-                except: pass
-
-@tasks.loop(seconds=900) # 15 min to save API calls on free tier
-async def live_loop():
-    await bot.wait_until_ready()
-    data = await football_api("fixtures", {"live": "all"})
-    for fixture in data.get('response', []):
-        if fixture['league']['id'] not in LEAGUES: continue
-        for guild in bot.guilds:
-            cid = await get_channel_id(guild.id)
-            if not cid: continue
-            ch = guild.get_channel(cid)
-            if not ch: continue
-            try: await ch.send(embed=live_embed(fixture))
-            except: pass
-
+# ===== BOT EVENTS =====
 @bot.event
 async def on_ready():
-    await setup_db()
-    scheduler.add_job(post_fixtures, 'cron', hour=9, minute=0)
-    scheduler.add_job(post_scorers, 'cron', day_of_week='mon', hour=10)
-    scheduler.start()
-    live_loop.start()
+    await init_db()
+    print(f"Logged in as {bot.user} | SQLite DB Ready")
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
     except Exception as e:
         print(e)
-    print(f"Logged in as {bot.user} | SQLite DB Ready")
+
+# ===== ADMIN COMMANDS =====
+@bot.tree.command(name="setchannel", description="Set channels for auto-posting features")
+@app_commands.describe(
+    feature="What feature do you want to set a channel for?",
+    channel="Pick the channel"
+)
+@app_commands.choices(feature=[
+    app_commands.Choice(name="Live Score Updates", value="livescore"),
+    app_commands.Choice(name="Goal Alerts", value="goals"),
+    app_commands.Choice(name="Match Results", value="results"),
+    app_commands.Choice(name="Fixtures", value="fixtures"),
+    app_commands.Choice(name="Top Scorers", value="scorers"),
+])
+async def setchannel(interaction: discord.Interaction, feature: app_commands.Choice[str], channel: discord.TextChannel):
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("INSERT OR REPLACE INTO guild_channels VALUES (?,?,?)", 
+                        (interaction.guild_id, feature.value, channel.id))
+        await db.commit()
+    await interaction.response.send_message(f"✅ {feature.name} will now post in {channel.mention}", ephemeral=True)
+
+@bot.tree.command(name="botinfo", description="Get bot information")
+async def botinfo(interaction: discord.Interaction):
+    embed = discord.Embed(title="GoalWire Bot", description="Feature-rich football Discord bot", color=0x00ff00)
+    embed.add_field(name="Servers", value=len(bot.guilds))
+    embed.add_field(name="Commands", value="24")
+    embed.add_field(name="Latency", value=f"{round(bot.latency * 1000)}ms")
+    await interaction.response.send_message(embed=embed)
+
+# ===== LIVE MATCHES =====
+@bot.tree.command(name="livescore", description="Get live scores")
+async def livescore(interaction: discord.Interaction):
+    await interaction.response.defer()
+    data = await football_api_request("matches?status=LIVE")
+    embed = discord.Embed(title="🔴 Live Matches", color=0xff0000)
+    for match in data.get("matches", [])[:10]:
+        home = match["homeTeam"]["name"]
+        away = match["awayTeam"]["name"]
+        score = f"{match['score']['fullTime']['home'] or 0}-{match['score']['fullTime']['away'] or 0}"
+        embed.add_field(name=f"{home} vs {away}", value=f"Score: {score}", inline=False)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="fixtures", description="Get upcoming fixtures")
+@app_commands.describe(league="League code: PL, BL1, SA, PD, FL1, CL, EL")
+async def fixtures(interaction: discord.Interaction, league: str):
+    await interaction.response.defer()
+    data = await football_api_request(f"competitions/{league}/matches?status=SCHEDULED")
+    embed = discord.Embed(title=f"📅 {league} Fixtures", color=0x0099ff)
+    for match in data.get("matches", [])[:5]:
+        home = match["homeTeam"]["name"]
+        away = match["awayTeam"]["name"]
+        date = match["utcDate"][:10]
+        embed.add_field(name=f"{home} vs {away}", value=f"Date: {date}", inline=False)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="result", description="Get recent results")
+@app_commands.describe(league="League code: PL, BL1, SA, PD, FL1, CL, EL")
+async def result(interaction: discord.Interaction, league: str):
+    await interaction.response.defer()
+    data = await football_api_request(f"competitions/{league}/matches?status=FINISHED")
+    embed = discord.Embed(title=f"🏁 {league} Results", color=0x00ff00)
+    for match in data.get("matches", [])[-5:]:
+        home = match["homeTeam"]["name"]
+        away = match["awayTeam"]["name"]
+        score = f"{match['score']['fullTime']['home']}-{match['score']['fullTime']['away']}"
+        embed.add_field(name=f"{home} vs {away}", value=f"FT: {score}", inline=False)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="scorers", description="Get top scorers")
+@app_commands.describe(league="League code: PL, BL1, SA, PD, FL1, CL, EL")
+async def scorers(interaction: discord.Interaction, league: str):
+    await interaction.response.defer()
+    data = await football_api_request(f"competitions/{league}/scorers")
+    embed = discord.Embed(title=f"⚽ {league} Top Scorers", color=0xffd700)
+    for scorer in data.get("scorers", [])[:10]:
+        player = scorer["player"]["name"]
+        team = scorer["team"]["name"]
+        goals = scorer["goals"]
+        embed.add_field(name=f"{player}", value=f"{team} - {goals} goals", inline=False)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="h2h", description="Head to head stats")
+@app_commands.describe(team1="First team name", team2="Second team name")
+async def h2h(interaction: discord.Interaction, team1: str, team2: str):
+    await interaction.response.send_message(f"🔍 H2H stats for {team1} vs {team2} - Coming soon!", ephemeral=True)
+
+# ===== STATS =====
+@bot.tree.command(name="standings", description="League standings")
+@app_commands.describe(league="League code: PL, BL1, SA, PD, FL1, CL, EL")
+async def standings(interaction: discord.Interaction, league: str):
+    await interaction.response.defer()
+    data = await football_api_request(f"competitions/{league}/standings")
+    embed = discord.Embed(title=f"📊 {league} Standings", color=0x0099ff)
+    table = data.get("standings", [{}])[0].get("table", [])[:10]
+    for team in table:
+        pos = team["position"]
+        name = team["team"]["name"]
+        pts = team["points"]
+        embed.add_field(name=f"{pos}. {name}", value=f"{pts} pts", inline=False)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="team", description="Get team info")
+@app_commands.describe(team="Team name")
+async def team(interaction: discord.Interaction, team: str):
+    await interaction.response.send_message(f"🔍 Team info for {team} - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="teamsearch", description="Search for teams")
+@app_commands.describe(query="Team name to search")
+async def teamsearch(interaction: discord.Interaction, query: str):
+    await interaction.response.send_message(f"🔍 Searching teams: {query} - Coming soon!", ephemeral=True)
+
+# ===== AI INSIGHTS =====
+@bot.tree.command(name="preview", description="AI match preview")
+@app_commands.describe(match="Match description: Team1 vs Team2")
+async def preview(interaction: discord.Interaction, match: str):
+    await interaction.response.defer()
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"Give a short football match preview for {match}"}]
+    )
+    await interaction.followup.send(response.choices[0].message.content)
+
+@bot.tree.command(name="predict", description="AI match prediction")
+@app_commands.describe(match="Match description: Team1 vs Team2")
+async def predict(interaction: discord.Interaction, match: str):
+    await interaction.response.defer()
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"Predict the score for {match}. Give reasoning."}]
+    )
+    await interaction.followup.send(response.choices[0].message.content)
+
+@bot.tree.command(name="summarize", description="AI match summary")
+@app_commands.describe(match="Match description: Team1 vs Team2")
+async def summarize(interaction: discord.Interaction, match: str):
+    await interaction.response.send_message(f"📝 Summarizing {match} - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="scout", description="AI player scouting report")
+@app_commands.describe(player="Player name")
+async def scout(interaction: discord.Interaction, player: str):
+    await interaction.response.defer()
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"Give a short scouting report for football player {player}"}]
+    )
+    await interaction.followup.send(response.choices[0].message.content)
+
+# ===== FANTASY PL =====
+@bot.tree.command(name="fpllink", description="Link your FPL account")
+async def fpllink(interaction: discord.Interaction):
+    await interaction.response.send_message("🔗 FPL linking - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="myfpl", description="Your FPL team")
+async def myfpl(interaction: discord.Interaction):
+    await interaction.response.send_message("⚽ Your FPL team - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="fplplayer", description="FPL player stats")
+@app_commands.describe(player="Player name")
+async def fplplayer(interaction: discord.Interaction, player: str):
+    await interaction.response.send_message(f"📊 FPL stats for {player} - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="fplleague", description="FPL league standings")
+async def fplleague(interaction: discord.Interaction):
+    await interaction.response.send_message("🏆 FPL league standings - Coming soon!", ephemeral=True)
+
+# ===== ALERTS =====
+@bot.tree.command(name="alert", description="Manage match alerts")
+@app_commands.describe(action="add, list, or remove", match_id="Match ID for add/remove")
+@app_commands.choices(action=[
+    app_commands.Choice(name="add", value="add"),
+    app_commands.Choice(name="list", value="list"),
+    app_commands.Choice(name="remove", value="remove")
+])
+async def alert(interaction: discord.Interaction, action: app_commands.Choice[str], match_id: str = None):
+    if action.value == "add":
+        await interaction.response.send_message(f"🔔 Alert added for match {match_id}", ephemeral=True)
+    elif action.value == "list":
+        await interaction.response.send_message("📋 Your alerts - Coming soon!", ephemeral=True)
+    elif action.value == "remove":
+        await interaction.response.send_message(f"🔕 Alert removed for match {match_id}", ephemeral=True)
+
+# ===== FUN =====
+@bot.tree.command(name="trivia", description="Football trivia")
+async def trivia(interaction: discord.Interaction):
+    await interaction.response.send_message("❓ Football trivia - Coming soon!", ephemeral=True)
+
+@bot.tree.command(name="poll", description="Create a poll")
+@app_commands.describe(question="Poll question")
+async def poll(interaction: discord.Interaction, question: str):
+    embed = discord.Embed(title="📊 Poll", description=question, color=0x0099ff)
+    msg = await interaction.channel.send(embed=embed)
+    await msg.add_reaction("👍")
+    await msg.add_reaction("👎")
+    await interaction.response.send_message("Poll created!", ephemeral=True)
+
+@bot.tree.command(name="banter", description="AI football banter")
+async def banter(interaction: discord.Interaction):
+    await interaction.response.defer()
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Give a funny football banter line"}]
+    )
+    await interaction.followup.send(response.choices[0].message.content)
+
+@bot.tree.command(name="whoami", description="Who are you?")
+async def whoami(interaction: discord.Interaction):
+    embed = discord.Embed(title="🤔 Who Am I?", description="I'm GoalWire, your football companion bot!", color=0xff00ff)
+    await interaction.response.send_message(embed=embed)
 
 bot.run(TOKEN)
