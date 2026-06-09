@@ -615,7 +615,8 @@ async def on_interaction(interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         events = await api_get("fixtures/events", {"fixture": fixture_id})
         fix_data = await api_get("fixtures", {"id": fixture_id})
-        if not fix_data.get('response'): return
+        if not fix_data.get('response'):
+            return await interaction.followup.send(embed=embed_reply("📅 Coming soon"), ephemeral=True)
 
         fix = fix_data['response'][0]
         embed = discord.Embed(title=f"{fix['teams']['home']['name']} {fix['goals']['home']} - {fix['goals']['away']} {fix['teams']['away']['name']}", color=0x95a5a6)
@@ -624,4 +625,109 @@ async def on_interaction(interaction: discord.Interaction):
         goals = [e for e in events.get('response',[]) if e['type'] == 'Goal']
         if goals:
             goal_text = [f"{e['time']['elapsed']}' {e['player']['name']} ({e['team']['name']})" for e in goals]
-            embed.add_field(name="Scorers", value="\n".join(goal_text),
+            embed.add_field(name="Scorers", value="\n".join(goal_text), inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    elif custom_id.startswith('live_'):
+        fixture_id = int(custom_id.split('_')[1])
+        await interaction.response.defer(ephemeral=True)
+        data = await api_get("fixtures", {"id": fixture_id})
+        if not data.get('response'):
+            return await interaction.followup.send(embed=embed_reply("📅 Coming soon"), ephemeral=True)
+
+        fix = data['response'][0]
+        embed = discord.Embed(title=f"🔴 LIVE: {fix['teams']['home']['name']} vs {fix['teams']['away']['name']}", color=0xe74c3c)
+        embed.add_field(name="Score", value=f"{fix['goals']['home']} - {fix['goals']['away']}")
+        embed.add_field(name="Minute", value=f"{fix['fixture']['status']['elapsed']}'")
+        embed.add_field(name="League", value=fix['league']['name'])
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    elif custom_id.startswith('player_'):
+        parts = custom_id.split('_')
+        player_id = int(parts[1])
+        await interaction.response.defer(ephemeral=True)
+        embed = await get_player_card(player_id)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    elif custom_id.startswith('squad_'):
+        team_id = int(custom_id.split('_')[1])
+        await interaction.response.defer(ephemeral=True)
+        data = await api_get("players/squads", {"team": team_id})
+        if not data.get('response'):
+            return await interaction.followup.send(embed=embed_reply("📅 Coming soon"), ephemeral=True)
+
+        players = data['response'][0]['players']
+        embed = discord.Embed(title="Squad", color=0x3498db)
+        player_list = []
+        view = discord.ui.View()
+        for i, p in enumerate(players[:25]):
+            player_list.append(f"{p['number']}. {p['name']} - {p['position']}")
+            view.add_item(PlayerButton(p['id'], str(p['number'])))
+        embed.description = "```\n" + "\n".join(player_list) + "\n```"
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    elif custom_id.startswith('show_leaderboard'):
+        await interaction.response.defer()
+        preds = load_predictions()
+        guild_id = str(interaction.guild_id)
+        if guild_id not in preds:
+            return await interaction.followup.send(embed=embed_reply("📅 Coming soon"))
+
+        sorted_users = sorted(preds[guild_id].items(), key=lambda x: x[1]["points"], reverse=True)[:10]
+        embed = discord.Embed(title="🏆 Server Prediction Leaderboard", color=0xf39c12)
+        for i, (uid, data) in enumerate(sorted_users):
+            try:
+                user = await bot.fetch_user(int(uid))
+                name = user.name
+            except:
+                name = f"User {uid}"
+            embed.add_field(name=f"{i+1}. {name}", value=f"{data['points']} pts", inline=False)
+        await interaction.followup.send(embed=embed)
+
+    elif custom_id.startswith('remind_'):
+        await interaction.response.send_message(embed=embed_reply("⏰ Reminder set", "I'll ping you when the match starts"), ephemeral=True)
+
+@tasks.loop(minutes=5)
+async def auto_post_transfers():
+    global last_transfer_ids
+    data = await api_get("transfers", {"last": 5})
+    if not data.get('response'): return
+
+    new_transfers = []
+    for t in data['response']:
+        transfer_id = f"{t['player']['id']}_{t['transfers'][0]['date']}"
+        if transfer_id not in last_transfer_ids:
+            new_transfers.append(t)
+            last_transfer_ids.add(transfer_id)
+
+    if new_transfers and len(last_transfer_ids) > 5:
+        for guild in bot.guilds:
+            channel = discord.utils.get(guild.text_channels, name="transfers") or guild.system_channel
+            if channel:
+                embed = discord.Embed(title="🔄 NEW TRANSFER", color=0xf1c40f)
+                for t in new_transfers[:3]:
+                    transfer_info = t['transfers'][0]
+                    embed.add_field(name=t['player']['name'], value=f"{t['teams']['out']['name']} → {t['teams']['in']['name']} {transfer_info.get('type','')}", inline=False)
+                await channel.send(embed=embed)
+
+@tasks.loop(minutes=15)
+async def auto_post_fixtures():
+    global last_match_ids
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    data = await api_get("fixtures", {"date": today, "league": 39})
+    if not data.get('response'): return
+
+    for fix in data['response']:
+        match_id = fix['fixture']['id']
+        if match_id not in last_match_ids and fix['fixture']['status']['short'] == "NS":
+            last_match_ids.add(match_id)
+            for guild in bot.guilds:
+                channel = discord.utils.get(guild.text_channels, name="fixtures") or guild.system_channel
+                if channel:
+                    embed = discord.Embed(title="⚽ Match Starting Soon", color=0x3498db)
+                    embed.add_field(name="Fixture", value=f"{fix['teams']['home']['name']} vs {fix['teams']['away']['name']}")
+                    embed.add_field(name="Kickoff", value=fix['fixture']['date'][11:16])
+                    await channel.send(embed=embed)
+
+bot.run(TOKEN)
