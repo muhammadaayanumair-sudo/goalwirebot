@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 # Import custom core modules
 import config
 from config import Colours, COMPETITION_IDS
-from database import Database
+from database import database
 from services.football_api import FootballAPI
 
 if not config.DISCORD_BOT_TOKEN:
