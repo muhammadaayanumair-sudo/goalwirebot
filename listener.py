@@ -6,7 +6,7 @@ Handles 24/7 dynamic slash commands, real-time match stats, and the card economy
 import sys
 import random
 import discord
-from discord import app_commands
+from discord import app_commands, Choice
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 
@@ -21,6 +21,34 @@ if not config.DISCORD_BOT_TOKEN:
     sys.exit(1)
 
 intents = discord.Intents.default()
+
+# ─── 🔍 AUTO-COMPLETE CHOICE FILTER ENGINE ─────────────────────────────────────
+
+# Comprehensive internal popular lookup cache for dynamic autocomplete filters
+POPULAR_TEAMS = [
+    "Real Madrid", "Barcelona", "Arsenal", "Manchester City", "Liverpool", 
+    "Manchester United", "Chelsea", "Bayern Munich", "Borussia Dortmund", 
+    "Juventus", "AC Milan", "Inter Milan", "Paris Saint-Germain", "Atletico Madrid",
+    "Tottenham Hotspur", "Newcastle United", "Aston Villa", "Bayer Leverkusen",
+    "RB Leipzig", "Napoli", "Roma", "Lazio", "Marseille", "Monaco", "Lyon"
+]
+
+async def team_autocomplete(interaction: discord.Interaction, current: str) -> list[Choice[str]]:
+    """Filters popular teams dynamically as the user types."""
+    return [
+        Choice(name=team, value=team)
+        for team in POPULAR_TEAMS if current.lower() in team.lower()
+    ][:25]  # Discord caps choice array payloads at 25 entries max
+
+async def league_autocomplete(interaction: discord.Interaction, current: str) -> list[Choice[str]]:
+    """Filters tracked competition keys from config dynamically."""
+    return [
+        Choice(name=league, value=league)
+        for league in COMPETITION_IDS.keys() if current.lower() in league.lower()
+    ][:25]
+
+
+# ─── 🤖 BOT IMPLEMENTATION INITIALIZATION ──────────────────────────────────────
 
 class GoalwireBot(commands.Bot):
     def __init__(self):
@@ -115,6 +143,7 @@ async def live_matches(interaction: discord.Interaction):
 
 @bot.tree.command(name="score", description="Get the absolute latest live score or result status for a team")
 @app_commands.describe(team="Name of the team (e.g. Real Madrid, Arsenal)")
+@app_commands.autocomplete(team=team_autocomplete)
 async def team_score(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
@@ -123,9 +152,9 @@ async def team_score(interaction: discord.Interaction, team: str):
         t_home = fix["teams"]["home"]["name"].lower()
         t_away = fix["teams"]["away"]["name"].lower()
         if team.lower() in t_home or team.lower() in t_away:
-            hg = fix["goals"].get("home", 0)
-            ag = fix["goals"].get("away", 0)
-            elapsed = fix["fixture"]["status"].get("elapsed", 0)
+            hg = fix["goals"].get("home", 0) if fix["goals"].get("home") is not None else 0
+            ag = fix["goals"].get("away", 0) if fix["goals"].get("away") is not None else 0
+            elapsed = fix["fixture"]["status"].get("elapsed", 0) or 0
             embed = discord.Embed(
                 title=f"🔴 Live Score Notification: {fix['teams']['home']['name']} vs {fix['teams']['away']['name']}",
                 description=f"⏱️ **Minute**: {elapsed}'\n📊 **Scoreline**: `{hg} - {ag}`\n🏆 **League**: {fix['league']['name']}",
@@ -134,11 +163,12 @@ async def team_score(interaction: discord.Interaction, team: str):
             await interaction.followup.send(embed=embed)
             return
 
-    await interaction.followup.send(f"ℹ️ **{team}** is not playing live. Pull schedules via `/fixtures` or recent logs via `/results` instead.")
+    await interaction.followup.send(f"ℹ️ **{team}** is not playing live right now. Pull scheduled calendar events via `/fixtures` or recent match score logs via `/results` instead.")
 
 
-@bot.tree.command(name="fixtures", description="View upcoming matches for a specific team")
+@bot.tree.command(name="fixtures", description="View upcoming matches scheduled for a specific team")
 @app_commands.describe(team="Name of the team")
+@app_commands.autocomplete(team=team_autocomplete)
 async def upcoming_fixtures(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
@@ -160,14 +190,15 @@ async def upcoming_fixtures(interaction: discord.Interaction, team: str):
         raw_date = fix["fixture"]["date"]
         embed.add_field(
             name=f"🆚 {home} vs {away}",
-            value=f"🏆 League: {fix['league']['name']}\n⏰ Kickoff: `{raw_date}` (UTC)",
+            value=f"🏆 League: {fix['league']['name']}\n⏰ Kickoff Time: `{raw_date}` (UTC)",
             inline=False
         )
     await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="results", description="Look up recent match results for a specific team")
+@bot.tree.command(name="results", description="Look up recent completed match results for a specific team")
 @app_commands.describe(team="Name of the team")
+@app_commands.autocomplete(team=team_autocomplete)
 async def match_results(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
@@ -198,8 +229,8 @@ async def match_results(interaction: discord.Interaction, team: str):
     for fix in found_results[:5]:
         home = fix["teams"]["home"]["name"]
         away = fix["teams"]["away"]["name"]
-        hg = fix["goals"]["home"]
-        ag = fix["goals"]["away"]
+        hg = fix["goals"]["home"] if fix["goals"]["home"] is not None else 0
+        ag = fix["goals"]["away"] if fix["goals"]["away"] is not None else 0
         embed.add_field(
             name=f"✅ {home}  `{hg} - {ag}`  {away}",
             value=f"🏆 League: {fix['league']['name']} ({fix['fixture']['status']['long']})",
@@ -209,8 +240,9 @@ async def match_results(interaction: discord.Interaction, team: str):
 
 # ─── 📊 GENERAL LEAGUE STANDINGS & DATA ──────────────────────────────────────
 
-@bot.tree.command(name="table", description="View current league table standings")
+@bot.tree.command(name="table", description="View current league table standings for a competition")
 @app_commands.describe(league="The league name (e.g. Premier League, La Liga)")
+@app_commands.autocomplete(league=league_autocomplete)
 async def league_table(interaction: discord.Interaction, league: str):
     await interaction.response.defer()
     
@@ -222,12 +254,12 @@ async def league_table(interaction: discord.Interaction, league: str):
             break
             
     if not matched_id:
-        await interaction.followup.send(f"❌ Unknown competition: `{league}`.")
+        await interaction.followup.send(f"❌ Unknown competition choice: `{league}`. Use the pop-up search choices.")
         return
 
     standings = await FootballAPI.get_standings(matched_id)
     if not standings:
-        await interaction.followup.send(f"❌ Could not retrieve standings at this time.")
+        await interaction.followup.send(f"❌ Could not retrieve standings for {league} at this time. Verify API subscription tiers.")
         return
 
     rows = []
@@ -239,7 +271,11 @@ async def league_table(interaction: discord.Interaction, league: str):
             f"Pts: **{s['points']}** GD: {s['goalsDiff']}"
         )
 
-    embed = discord.Embed(title=f"📊 {league} Standings Table", description="\n".join(rows), color=Colours.BLUE)
+    embed = discord.Embed(
+        title=f"📊 {league} Standings Table", 
+        description="\n".join(rows) if rows else "No ranking entry matrices found inside this league packet.", 
+        color=Colours.BLUE
+    )
     await interaction.followup.send(embed=embed)
 
 # ─── 🪙 CARD ECONOMY & GACHA MINIGAME ENGINE ─────────────────────────────────
