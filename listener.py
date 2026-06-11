@@ -1,18 +1,20 @@
 """
 listener.py — Central interactive application engine for Goalwire.
-Handles 24/7 dynamic slash commands and premium match interaction hubs.
+Handles 24/7 dynamic slash commands, real-time match stats, and the card economy.
 """
 
 import sys
+import random
 import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 
-# Import your existing async modules and configs
-from services.football_api import FootballAPI
+# Import custom core modules 
 import config
 from config import Colours, COMPETITION_IDS
+from database import Database
+from services.football_api import FootballAPI
 
 # ─── CONFIG & LIFECYCLE MANAGEMENT ───────────────────────────────────────────
 if not config.DISCORD_BOT_TOKEN:
@@ -26,25 +28,31 @@ class GoalwireBot(commands.Bot):
         super().__init__(command_prefix=config.BOT_PREFIX, intents=intents)
         
     async def setup_hook(self):
-        # Initialize your async Football API Session
+        # 📁 1. Boot up SQLite Database Tables
+        await Database.init()
+        print("📁 SQLite Database layers mapped and initialised.")
+
+        # 🔌 2. Mount async Football API Session
         await FootballAPI.setup()
         print("🔌 FootballAPI session successfully mounted.")
         
-        # Sync all slash commands globally across all guilds
+        # ⚙️ 3. Synchronize slash command tree globally
         await self.tree.sync()
         print("⚙️ Slash commands synchronized globally!")
 
     async def close(self):
-        # Safely tear down network sockets on shutdown
+        # Safely disconnect network sockets and db pipelines on shutdown
         await FootballAPI.close()
         print("🔌 FootballAPI session disconnected.")
+        await Database.close()
+        print("📁 Database connection terminated.")
         await super().close()
 
 bot = GoalwireBot()
 
 @bot.event
 async def on_ready():
-    print(f"⚽ {bot.user.name} is online and serving commands!")
+    print(f"⚽ {bot.user.name} is online and serving communities!")
 
 # ─── 🔴 LIVE MATCH TRACKER COMMAND ────────────────────────────────────────────
 
@@ -71,7 +79,7 @@ async def live_matches(interaction: discord.Interaction):
     )
     
     components_rows = []
-    for fix in live_fixtures[:5]: # Cap at 5 display blocks for performance
+    for fix in live_fixtures[:5]: # Cap at 5 display blocks max for Discord layouts
         f = fix["fixture"]
         teams = fix["teams"]
         goals = fix["goals"]
@@ -101,14 +109,13 @@ async def live_matches(interaction: discord.Interaction):
     embed.set_footer(text="Goalwire Live Match Tracker Engine")
     await interaction.followup.send(embed=embed, components=components_rows if components_rows else None)
 
-# ─── ⚽ TEAM SPECIFIC STATS COMMANDS ──────────────────────────────────────────
+# ─── ⚽ TEAM FOOTBALL STATS COMMANDS ──────────────────────────────────────────
 
 @bot.tree.command(name="score", description="Get the absolute latest live score or result status for a team")
 @app_commands.describe(team="Name of the team (e.g. Real Madrid, Arsenal)")
 async def team_score(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
-    # Check all active live scores first
     live_fixtures = await FootballAPI.get_all_live_fixtures()
     for fix in live_fixtures:
         t_home = fix["teams"]["home"]["name"].lower()
@@ -125,7 +132,7 @@ async def team_score(interaction: discord.Interaction, team: str):
             await interaction.followup.send(embed=embed)
             return
 
-    await interaction.followup.send(f"ℹ️ **{team}** is not playing an active live match right now. Pulling up historical datasets using `/results` or schedules via `/fixtures` instead.")
+    await interaction.followup.send(f"ℹ️ **{team}** is not playing live. Pull schedules via `/fixtures` or recent logs via `/results` instead.")
 
 
 @bot.tree.command(name="fixtures", description="View upcoming matches for a specific team")
@@ -134,7 +141,6 @@ async def upcoming_fixtures(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
     found_matches = []
-    # Search forward fixtures in all tracked primary leagues mapped in configuration
     for key, lid in COMPETITION_IDS.items():
         league_fixes = await FootballAPI.get_fixtures(lid, days_ahead=config.FIXTURE_LOOKAHEAD_DAYS)
         for fix in league_fixes:
@@ -142,14 +148,14 @@ async def upcoming_fixtures(interaction: discord.Interaction, team: str):
                 found_matches.append(fix)
 
     if not found_matches:
-        await interaction.followup.send(f"📅 No matches scheduled for **{team}** over the next {config.FIXTURE_LOOKAHEAD_DAYS} days inside primary tracked leagues.")
+        await interaction.followup.send(f"📅 No matches scheduled for **{team}** over the next {config.FIXTURE_LOOKAHEAD_DAYS} days.")
         return
 
     embed = discord.Embed(title=f"📅 Scheduled Matches: {team}", color=Colours.GREEN, timestamp=datetime.now(timezone.utc))
     for fix in found_matches[:5]:
         home = fix["teams"]["home"]["name"]
         away = fix["teams"]["away"]["name"]
-        raw_date = fix["fixture"]["date"] # ISO string timestamp
+        raw_date = fix["fixture"]["date"]
         embed.add_field(
             name=f"🆚 {home} vs {away}",
             value=f"🏆 League: {fix['league']['name']}\n⏰ Kickoff: `{raw_date}` (UTC)",
@@ -163,11 +169,9 @@ async def upcoming_fixtures(interaction: discord.Interaction, team: str):
 async def match_results(interaction: discord.Interaction, team: str):
     await interaction.response.defer()
     
-    # Pull match entries from past week cycles to find completed scores
     found_results = []
     today = datetime.now(timezone.utc)
     for key, lid in COMPETITION_IDS.items():
-        # Get matching data logs
         year = today.year
         params = {
             "league": lid,
@@ -201,10 +205,10 @@ async def match_results(interaction: discord.Interaction, team: str):
         )
     await interaction.followup.send(embed=embed)
 
-# ─── 📊 LEAGUE GENERAL DATA MODULES ───────────────────────────────────────────
+# ─── 📊 GENERAL LEAGUE STANDINGS & DATA ──────────────────────────────────────
 
 @bot.tree.command(name="table", description="View current league table standings")
-@app_commands.describe(league="The league name (e.g. Premier League, La Liga, Bundesliga)")
+@app_commands.describe(league="The league name (e.g. Premier League, La Liga)")
 async def league_table(interaction: discord.Interaction, league: str):
     await interaction.response.defer()
     
@@ -216,16 +220,16 @@ async def league_table(interaction: discord.Interaction, league: str):
             break
             
     if not matched_id:
-        await interaction.followup.send(f"❌ Unknown competition: `{league}`. Try 'Premier League', 'La Liga', etc.")
+        await interaction.followup.send(f"❌ Unknown competition: `{league}`.")
         return
 
     standings = await FootballAPI.get_standings(matched_id)
     if not standings:
-        await interaction.followup.send(f"❌ Could not retrieve standings for {league} at this time.")
+        await interaction.followup.send(f"❌ Could not retrieve standings at this time.")
         return
 
     rows = []
-    for entry in standings[:12]: # Top 12 ranks
+    for entry in standings[:12]:
         s = entry[0] if isinstance(entry, list) else entry
         rows.append(
             f"`{s['rank']:>2}.` **{s['team']['name']}** "
@@ -233,76 +237,128 @@ async def league_table(interaction: discord.Interaction, league: str):
             f"Pts: **{s['points']}** GD: {s['goalsDiff']}"
         )
 
+    embed = discord.Embed(title=f"📊 {league} Standings Table", description="\n".join(rows), color=Colours.BLUE)
+    await interaction.followup.send(embed=embed)
+
+# ─── 🪙 CARD ECONOMY & GACHA MINIGAME ENGINE ─────────────────────────────────
+
+@bot.tree.command(name="daily", description="Claim your daily bonus of 250 Goalwire coins")
+async def economy_daily(interaction: discord.Interaction):
+    await interaction.response.defer()
+    user_id = interaction.user.id
+    
+    # Check date stamps inside user economy profile records
+    profile = await Database.get_profile(user_id)
+    now = datetime.now(timezone.utc)
+    
+    if profile["last_daily"]:
+        last_daily_time = datetime.fromisoformat(profile["last_daily"])
+        if now - last_daily_time < timedelta(hours=24):
+            cooldown_left = timedelta(hours=24) - (now - last_daily_time)
+            hours, remainder = divmod(int(cooldown_left.total_seconds()), 3600)
+            minutes, _ = divmod(remainder, 60)
+            await interaction.followup.send(f"⏳ **Cooldown active!** Come back in `{hours}h {minutes}m` to claim your next bonus daily payment.")
+            return
+
+    # Add 250 coins and save the execution timestamp
+    await Database.adjust_coins(user_id, 250)
+    db = Database.conn()
+    await db.execute("UPDATE card_profiles SET last_daily=? WHERE user_id=?", (now.isoformat(), user_id))
+    await db.commit()
+    
+    updated_profile = await Database.get_profile(user_id)
     embed = discord.Embed(
-        title=f"📊 {league} Standings Table",
-        description="\n".join(rows) or "No data available.",
-        color=Colours.BLUE,
-        timestamp=datetime.now(timezone.utc)
+        title="🪙 Daily Check-in Granted!",
+        description=f"Added **250** coins to your wallet!\n💳 New Total Balance: **{updated_profile['coins']}** coins.",
+        color=Colours.GOLD
     )
     await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="topscorers", description="Display golden boot leaders for a league")
-@app_commands.describe(league="The league name")
-async def league_top_scorers(interaction: discord.Interaction, league: str):
+@bot.tree.command(name="pack", description="Purchase an Elite Player Pack for 500 coins")
+async def purchase_pack(interaction: discord.Interaction):
     await interaction.response.defer()
+    user_id = interaction.user.id
+    profile = await Database.get_profile(user_id)
     
-    matched_id = None
-    for key, lid in COMPETITION_IDS.items():
-        if league.lower() in key.lower():
-            matched_id = lid
-            league = key
-            break
-
-    if not matched_id:
-        await interaction.followup.send(f"❌ Competition not tracked. Try 'Premier League' or 'La Liga'.")
+    if profile["coins"] < 500:
+        await interaction.followup.send(f"❌ **Insufficient funds!** Packs require `500` coins. Your balance is `{profile['coins']}`. Use `/daily` to earn more.")
         return
 
-    scorers = await FootballAPI.get_top_scorers(matched_id)
-    if not scorers:
-        await interaction.followup.send(f"❌ Golden Boot metrics empty for {league}.")
-        return
+    # Deduct 500 coins from the wallet ledger
+    await Database.adjust_coins(user_id, -500)
+    
+    # 🎲 Gacha Drop Logic (Pool Simulation using structural defaults if card_registry is unseeded)
+    db = Database.conn()
+    cur = await db.execute("SELECT * FROM card_registry ORDER BY RANDOM() LIMIT 1")
+    card = await cur.fetchone()
+    
+    # Dynamic Failover System if table is empty (Self-seeds on-demand)
+    if not card:
+        mock_pool = [
+            ("Kylian Mbappé", 92, "ST", "Real Madrid", "France", "Icon"),
+            ("Erling Haaland", 91, "ST", "Manchester City", "Norway", "Gold"),
+            ("Kevin De Bruyne", 90, "CM", "Manchester City", "Belgium", "Gold"),
+            ("Jude Bellingham", 88, "CAM", "Real Madrid", "England", "Gold"),
+            ("Bukayo Saka", 87, "RW", "Arsenal", "England", "Gold"),
+            ("Zinedine Zidane", 94, "CAM", "Icon Club", "France", "Icon")
+        ]
+        chosen = random.choice(mock_pool)
+        await db.execute(
+            "INSERT INTO card_registry (player_name, rating, position, club, nationality, rarity) VALUES (?,?,?,?,?,?)",
+            chosen
+        )
+        await db.commit()
+        cur = await db.execute("SELECT * FROM card_registry ORDER BY RANDOM() LIMIT 1")
+        card = await cur.fetchone()
 
-    lines = []
-    for rank, p_data in enumerate(scorers[:10], start=1):
-        player = p_data["player"]["name"]
-        team = p_data["statistics"][0]["team"]["name"]
-        goals = p_data["statistics"][0]["goals"]["total"] or 0
-        lines.append(f"`{rank}.` **{player}** ({team}) — **{goals}** ⚽")
-
-    embed = discord.Embed(title=f"🥇 {league} Golden Boot Leaders", description="\n".join(lines), color=Colours.GOLD)
+    # Store pulled card mapping straight into user collection inventory table
+    await Database.add_card_to_inventory(user_id, card["card_id"])
+    
+    # Set display color matching tier rarity
+    card_color = Colours.GOLD if card["rarity"] == "Icon" else Colours.GREEN
+    
+    embed = discord.Embed(
+        title="🎉 Premium Pack Opened!",
+        description=f"You opened an **Elite Player Pack** and signed a superstar!\n\n"
+                    f"🏃‍♂️ **Player: **\n"
+                    f"📊 **Rating**: `{card['rating']}`\n"
+                    f"⚔️ **Position**: {card['position']}\n"
+                    f"🏆 **Club**: {card['club']} ({card['nationality']})\n"
+                    f"✨ **Rarity Tier**: `{card['rarity']}`",
+        color=card_color
+    )
+    embed.set_footer(text=f"500 coins deducted. New Balance: {profile['coins'] - 500} coins.")
     await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="assists", description="Display playmaking assist leaders for a league")
-@app_commands.describe(league="The league name")
-async def league_top_assists(interaction: discord.Interaction, league: str):
+@bot.tree.command(name="inventory", description="Display your entire unlocked player card collection inventory")
+async def view_inventory(interaction: discord.Interaction):
     await interaction.response.defer()
+    user_id = interaction.user.id
     
-    matched_id = None
-    for key, lid in COMPETITION_IDS.items():
-        if league.lower() in key.lower():
-            matched_id = lid
-            league = key
-            break
+    profile = await Database.get_profile(user_id)
+    cards = await Database.get_inventory(user_id)
+    
+    embed = discord.Embed(
+        title=f"📋 {interaction.user.name}'s Goalwire Club Inventory",
+        description=f"💳 Wallet Balance: **{profile['coins']}** coins\n📋 Total Cards Collected: `{len(cards)}`",
+        color=Colours.BLUE,
+        timestamp=datetime.now(timezone.utc)
+    )
+    
+    if not cards:
+        embed.description += "\n\n⚠️ *Your club inventory is completely empty. Run `/pack` to buy your initial items!*"
+    else:
+        lines = []
+        for c in cards[:15]: # Display top 15 cards to fit inside clear embed guidelines
+            rarity_label = "⭐ " if c["rarity"] == "Icon" else ""
+            lines.append(f"`{c['rating']}` {rarity_label}**{c['player_name']}** ({c['position']} • {c['club']})")
+        
+        embed.add_field(name="Top Active Roster", value="\n".join(lines), inline=False)
+        if len(cards) > 15:
+            embed.set_footer(text=f"Showing top 15 out of {len(cards)} total cards.")
 
-    if not matched_id:
-        await interaction.followup.send(f"❌ Competition not tracked. Try 'Premier League' or 'La Liga'.")
-        return
-
-    assists_list = await FootballAPI.get_top_assists(matched_id)
-    if not assists_list:
-        await interaction.followup.send(f"❌ Playmaking assist stats empty for {league}.")
-        return
-
-    lines = []
-    for rank, p_data in enumerate(assists_list[:10], start=1):
-        player = p_data["player"]["name"]
-        team = p_data["statistics"][0]["team"]["name"]
-        assists = p_data["statistics"][0]["goals"]["assists"] or 0
-        lines.append(f"`{rank}.` **{player}** ({team}) — **{assists}** 👟")
-
-    embed = discord.Embed(title=f"👟 {league} Playmaking Assist Kings", description="\n".join(lines), color=Colours.CYAN)
     await interaction.followup.send(embed=embed)
 
 # ─── 🎮 INTERACTION ROUTING FOR DYNAMIC BUTTON CLICK EVENT HOOKS ───────────────
@@ -365,4 +421,5 @@ async def on_interaction(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error handling live button layout: {e}")
 
+# Run bot using your structured configuration values
 bot.run(config.DISCORD_BOT_TOKEN)
