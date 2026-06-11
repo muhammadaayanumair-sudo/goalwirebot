@@ -121,9 +121,7 @@ class GoalwireTasks(commands.Cog):
             if not transfers:
                 return
 
-            for trans in transfers[:5]:  # Process top 5 arrivals per tick to manage webhook rate limits
-                player_name = trans["player"]["name"]
-               for trans in transfers[:5]:
+          for trans in transfers[:5]:
             player_name = trans["player"]["name"]
             for move in trans["transfers"][:1]:
                 transfer_date = move["date"]
