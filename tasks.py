@@ -124,8 +124,7 @@ class GoalwireTasks(commands.Cog):
                     transfer_date = move["date"]
                     m_type = move["type"] or "Permanent Deal"
                     teams = move["teams"]
-                    # Add your logic here to send the Discord embed!
+                    # Add your logic here to send the Discord embed
                     
         except Exception as e:
             log.error("Error in transfer_news_loop: %s", e)
-                teams = move["teams"] check this code and tell if any error
