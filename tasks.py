@@ -126,3 +126,4 @@ class GoalwireTasks(commands.Cog):
                     
         except Exception as e:
             log.error("Error in transfer_news_loop: %s", e)
+        
