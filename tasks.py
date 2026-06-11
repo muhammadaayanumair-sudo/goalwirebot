@@ -105,25 +105,26 @@ class GoalwireTasks(commands.Cog):
     async def before_live_loop(self):
         await self.bot.wait_until_ready()
 # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
-    @tasks.loop(minutes=10)
-    async def transfer_news_loop(self):
-        """Pulls recent global player transfers and alerts configured server channels."""
-        try:
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            data = await FootballAPI._get("transfers", {"date": today_str})
-            transfers = data.get("response", []) if data else []
+  @tasks.loop(minutes=10)
+async def transfer_news_loop(self):
+    """Pulls recent global player transfers and alerts configured server channels."""
+    try:
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        data = await FootballAPI._get("transfers", {"date": today_str})
+        transfers = data.get("response", []) if data else []
 
-            if not transfers:
-                return
+        if not transfers:
+            return
 
-            for trans in transfers[:5]:
-                player_name = trans["player"]["name"]
-                for move in trans["transfers"][:1]:
-                    transfer_date = move["date"]
-                    m_type = move["type"] or "Permanent Deal"
-                    teams = move["teams"]
-                    # Add your logic here
-                    
-        except Exception as e:
-            log.error("Error in transfer_news_loop: %s", e)
-        
+        for trans in transfers[:5]:
+            player_name = trans["player"]["name"]
+
+            for move in trans["transfers"][:1]:
+                transfer_date = move["date"]
+                m_type = move["type"] or "Permanent Deal"
+                teams = move["teams"]
+
+                # Add your logic here
+
+    except Exception as e:
+        log.error("Error in transfer_news_loop: %s", e)
