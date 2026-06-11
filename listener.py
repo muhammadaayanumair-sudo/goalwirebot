@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 import config
 from config import Colours, COMPETITION_IDS
 from database import Database
-from services.football_api import FootballAPI
+from football_api import FootballAPI
 
 if not config.DISCORD_BOT_TOKEN:
     print("❌ DISCORD_BOT_TOKEN environment variable is missing in config.")
