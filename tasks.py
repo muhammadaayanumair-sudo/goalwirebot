@@ -121,9 +121,9 @@ class GoalwireTasks(commands.Cog):
             if not transfers:
                 return
 
-          for trans in transfers[:5]:
-            player_name = trans["player"]["name"]
-            for move in trans["transfers"][:1]:
-                transfer_date = move["date"]
-                m_type = move["type"] or "Permanent Deal"
-                teams = move["teams"]
+     for trans in transfers[:5]:
+        player_name = trans["player"]["name"]
+        for move in trans["transfers"][:1]:
+            transfer_date = move["date"]
+            m_type = move["type"] or "Permanent Deal"
+            teams = move["teams"]
