@@ -16,7 +16,6 @@ from config import Colours, COMPETITION_IDS
 from database import Database
 from services.football_api import FootballAPI
 
-# ─── CONFIG & LIFECYCLE MANAGEMENT ───────────────────────────────────────────
 if not config.DISCORD_BOT_TOKEN:
     print("❌ DISCORD_BOT_TOKEN environment variable is missing in config.")
     sys.exit(1)
@@ -41,7 +40,6 @@ class GoalwireBot(commands.Bot):
         print("⚙️ Slash commands synchronized globally!")
 
     async def close(self):
-        # Safely disconnect network sockets and db pipelines on shutdown
         await FootballAPI.close()
         print("🔌 FootballAPI session disconnected.")
         await Database.close()
@@ -246,8 +244,6 @@ async def league_table(interaction: discord.Interaction, league: str):
 async def economy_daily(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = interaction.user.id
-    
-    # Check date stamps inside user economy profile records
     profile = await Database.get_profile(user_id)
     now = datetime.now(timezone.utc)
     
@@ -260,7 +256,6 @@ async def economy_daily(interaction: discord.Interaction):
             await interaction.followup.send(f"⏳ **Cooldown active!** Come back in `{hours}h {minutes}m` to claim your next bonus daily payment.")
             return
 
-    # Add 250 coins and save the execution timestamp
     await Database.adjust_coins(user_id, 250)
     db = Database.conn()
     await db.execute("UPDATE card_profiles SET last_daily=? WHERE user_id=?", (now.isoformat(), user_id))
@@ -285,15 +280,12 @@ async def purchase_pack(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ **Insufficient funds!** Packs require `500` coins. Your balance is `{profile['coins']}`. Use `/daily` to earn more.")
         return
 
-    # Deduct 500 coins from the wallet ledger
     await Database.adjust_coins(user_id, -500)
     
-    # 🎲 Gacha Drop Logic (Pool Simulation using structural defaults if card_registry is unseeded)
     db = Database.conn()
     cur = await db.execute("SELECT * FROM card_registry ORDER BY RANDOM() LIMIT 1")
     card = await cur.fetchone()
     
-    # Dynamic Failover System if table is empty (Self-seeds on-demand)
     if not card:
         mock_pool = [
             ("Kylian Mbappé", 92, "ST", "Real Madrid", "France", "Icon"),
@@ -312,10 +304,7 @@ async def purchase_pack(interaction: discord.Interaction):
         cur = await db.execute("SELECT * FROM card_registry ORDER BY RANDOM() LIMIT 1")
         card = await cur.fetchone()
 
-    # Store pulled card mapping straight into user collection inventory table
     await Database.add_card_to_inventory(user_id, card["card_id"])
-    
-    # Set display color matching tier rarity
     card_color = Colours.GOLD if card["rarity"] == "Icon" else Colours.GREEN
     
     embed = discord.Embed(
@@ -351,15 +340,142 @@ async def view_inventory(interaction: discord.Interaction):
         embed.description += "\n\n⚠️ *Your club inventory is completely empty. Run `/pack` to buy your initial items!*"
     else:
         lines = []
-        for c in cards[:15]: # Display top 15 cards to fit inside clear embed guidelines
+        for c in cards[:15]: 
             rarity_label = "⭐ " if c["rarity"] == "Icon" else ""
-            lines.append(f"`{c['rating']}` {rarity_label}**{c['player_name']}** ({c['position']} • {c['club']})")
+            lines.append(f"`{c['instance_id']}` 🆔 — {rarity_label}**{c['player_name']}** ({c['rating']} OVR | {c['position']})")
         
-        embed.add_field(name="Top Active Roster", value="\n".join(lines), inline=False)
+        embed.add_field(name="Top Active Roster (Use 🆔 for listings/trades)", value="\n".join(lines), inline=False)
         if len(cards) > 15:
             embed.set_footer(text=f"Showing top 15 out of {len(cards)} total cards.")
 
     await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="claim", description="Claim random hourly free items or minor coin amounts")
+async def economy_claim(interaction: discord.Interaction):
+    await interaction.response.defer()
+    user_id = interaction.user.id
+    profile = await Database.get_profile(user_id)
+    now = datetime.now(timezone.utc)
+    
+    if profile["last_claim"]:
+        last_claim_time = datetime.fromisoformat(profile["last_claim"])
+        if now - last_claim_time < timedelta(hours=2):
+            cooldown_left = timedelta(hours=2) - (now - last_claim_time)
+            minutes, seconds = divmod(int(cooldown_left.total_seconds()), 60)
+            await interaction.followup.send(f"⏳ **Claim cooldown!** You can claim your next reward bundle in `{minutes}m {seconds}s`.")
+            return
+
+    reward_type = random.choice(["coins", "card"])
+    db = Database.conn()
+    
+    if reward_type == "coins":
+        amount = random.randint(50, 150)
+        await Database.adjust_coins(user_id, amount)
+        embed = discord.Embed(
+            title="🎁 Free Claim Drops",
+            description=f"You searched the training grounds and found **{amount}** coins!",
+            color=Colours.TEAL
+        )
+    else:
+        cur = await db.execute("SELECT * FROM card_registry WHERE rating < 85 ORDER BY RANDOM() LIMIT 1")
+        card = await cur.fetchone()
+        if not card:
+            await db.execute(
+                "INSERT INTO card_registry (player_name, rating, position, club, nationality, rarity) VALUES (?,?,?,?,?,?)",
+                ("Martin Ødegaard", 84, "CAM", "Arsenal", "Norway", "Silver")
+            )
+            await db.commit()
+            cur = await db.execute("SELECT * FROM card_registry WHERE rating < 85 ORDER BY RANDOM() LIMIT 1")
+            card = await cur.fetchone()
+            
+        await Database.add_card_to_inventory(user_id, card["card_id"])
+        embed = discord.Embed(
+            title="🎁 Free Claim Drops",
+            description=f"You signed a standard squad rotation player for free!\n\n🏃‍♂️ **{card['player_name']}** ({card['rating']} OVR | {card['position']})",
+            color=Colours.BLUE
+        )
+
+    await db.execute("UPDATE card_profiles SET last_claim=? WHERE user_id=?", (now.isoformat(), user_id))
+    await db.commit()
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="market", description="View public listings, sell items, or buy cards")
+@app_commands.describe(
+    action="Choose: view (see items), sell (list an item), or buy (purchase an item)",
+    item_id="The inventory 'instance_id' if selling, or the market 'listing_id' if buying",
+    price="The specific total coin price amount you want to sell the card for"
+)
+async def public_market(interaction: discord.Interaction, action: str, item_id: int | None = None, price: int | None = None):
+    await interaction.response.defer()
+    action = action.lower()
+
+    if action == "view":
+        listings = await Database.get_active_market()
+        if not listings:
+            await interaction.followup.send("🏪 **The Transfer Market is currently empty.** Be the first to list a player!")
+            return
+            
+        embed = discord.Embed(title="🏪 Goalwire Public Transfer Market", color=Colours.GOLD)
+        for list_item in listings[:10]:
+            embed.add_field(
+                name=f"🆔 List ID: `{list_item['listing_id']}` — {list_item['player_name']} ({list_item['rating']} OVR)",
+                value=f"💰 Price: **{list_item['buy_now_price']}** coins\n⏱️ Tier: `{list_item['rarity']}` | Expires in: <t:{int(datetime.fromisoformat(list_item['expires_at'].replace('Z', '+00:00')).timestamp())}:R>",
+                inline=False
+            )
+        await interaction.followup.send(embed=embed)
+
+    elif action == "sell":
+        if item_id is None or price is None or price <= 0:
+            await interaction.followup.send("❌ **Invalid usage!** To list a player, use: `/market action:sell item_id:[Your Card instance_id] price:[Coins]`")
+            return
+            
+        listing_id = await Database.create_market_listing(interaction.user.id, item_id, price)
+        if not listing_id:
+            await interaction.followup.send("❌ **Listing Failed.** Verify that you own this card instance ID and it isn't listed elsewhere.")
+        else:
+            await interaction.followup.send(f"✅ **Player listed successfully!** Your listing ID is `{listing_id}`. Buy via `/market action:buy item_id:{listing_id}`.")
+
+    elif action == "buy":
+        if item_id is None:
+            await interaction.followup.send("❌ **Missing parameter!** Provide the target `listing_id` to buy: `/market action:buy item_id:[listing_id]`")
+            return
+            
+        success, reason = await Database.buy_from_market(item_id, interaction.user.id)
+        if success:
+            await interaction.followup.send("🎉 **Transfer complete!** The coins have been exchanged, and the player is now in your `/inventory`!")
+        else:
+            await interaction.followup.send(f"❌ **Transaction blocked**: {reason}")
+    else:
+        await interaction.followup.send("❌ Unknown market operation. Choose between `view`, `sell`, or `buy` instead.")
+
+
+@bot.tree.command(name="trade", description="Directly transfer a card from your inventory to another community user")
+@app_commands.describe(
+    target_user="The player you want to trade with",
+    my_card_id="The exact instance_id of the card you want to gift them"
+)
+async def direct_trade(interaction: discord.Interaction, target_user: discord.User, my_card_id: int):
+    await interaction.response.defer()
+    
+    if target_user.id == interaction.user.id:
+        await interaction.followup.send("❌ You cannot trade players to yourself.")
+        return
+    if target_user.bot:
+        await interaction.followup.send("❌ Bots don't build trading card clubs!")
+        return
+
+    success = await Database.transfer_card_direct(my_card_id, interaction.user.id, target_user.id)
+    if success:
+        embed = discord.Embed(
+            title="🤝 Transfer Deal Finalised!",
+            description=f"Successfully transferred card instance ID `{my_card_id}` from {interaction.user.mention} to {target_user.mention}'s club roster!",
+            color=Colours.GREEN
+        )
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send("❌ **Trade rejected.** Make sure you own that card instance ID and it isn't listed on the open marketplace.")
 
 # ─── 🎮 INTERACTION ROUTING FOR DYNAMIC BUTTON CLICK EVENT HOOKS ───────────────
 @bot.event
@@ -421,5 +537,4 @@ async def on_interaction(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error handling live button layout: {e}")
 
-# Run bot using your structured configuration values
 bot.run(config.DISCORD_BOT_TOKEN)
