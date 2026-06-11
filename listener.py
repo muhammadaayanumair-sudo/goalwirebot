@@ -11,9 +11,9 @@ from discord.app_commands import Choice
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 
-# Import custom core modules 
+# Import custom core modules
 import config
-from config import Colours, COMPETITION_IDS
+from config import colours, COMPETITION_IDS
 from database import Database
 from services.football_api import FootballAPI
 
@@ -23,12 +23,12 @@ if not config.DISCORD_BOT_TOKEN:
 
 intents = discord.Intents.default()
 
-# ─── 🔍 AUTO-COMPLETE CHOICE FILTER ENGINE ─────────────────────────────────────
+# ─── 🔍 AUTO-COMPLETE CHOICE FILTER ENGINE ─────────────────────────────────
 
 # Comprehensive internal popular lookup cache for dynamic autocomplete filters
 POPULAR_TEAMS = [
-    "Real Madrid", "Barcelona", "Arsenal", "Manchester City", "Liverpool", 
-    "Manchester United", "Chelsea", "Bayern Munich", "Borussia Dortmund", 
+    "Real Madrid", "Barcelona", "Arsenal", "Manchester City", "Liverpool",
+    "Manchester United", "Chelsea", "Bayern Munich", "Borussia Dortmund",
     "Juventus", "AC Milan", "Inter Milan", "Paris Saint-Germain", "Atletico Madrid",
     "Tottenham Hotspur", "Newcastle United", "Aston Villa", "Bayer Leverkusen",
     "RB Leipzig", "Napoli", "Roma", "Lazio", "Marseille", "Monaco", "Lyon"
@@ -39,8 +39,7 @@ async def team_autocomplete(interaction: discord.Interaction, current: str) -> l
     return [
         Choice(name=team, value=team)
         for team in POPULAR_TEAMS if current.lower() in team.lower()
-    ][:25]  # Discord caps choice array payloads at 25 entries max
-
+    ]
 async def league_autocomplete(interaction: discord.Interaction, current: str) -> list[Choice[str]]:
     """Filters tracked competition keys from config dynamically."""
     return [
