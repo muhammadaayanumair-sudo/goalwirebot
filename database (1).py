@@ -151,3 +151,42 @@
         );
         """)
         await db.commit()
+# ── Card Economy Helpers ──────────────────────────────────────────────────
+    @classmethod
+    async def get_profile(cls, user_id: int) -> aiosqlite.Row:
+        """Fetch user cash balance profile. Automatically provisions profile if missing."""
+        db = cls.conn()
+        cur = await db.execute("SELECT * FROM card_profiles WHERE user_id=?", (user_id,))
+        profile = await cur.fetchone()
+        if not profile:
+            await db.execute("INSERT OR IGNORE INTO card_profiles (user_id, coins) VALUES (?, 1000)", (user_id,))
+            await db.commit()
+            cur = await db.execute("SELECT * FROM card_profiles WHERE user_id=?", (user_id,))
+            profile = await cur.fetchone()
+        return profile
+
+    @classmethod
+    async def adjust_coins(cls, user_id: int, amount: int) -> None:
+        """Add or remove coins from a user profile."""
+        db = cls.conn()
+        await cls.get_profile(user_id) # Ensure profile exists
+        await db.execute("UPDATE card_profiles SET coins = coins + ? WHERE user_id = ?", (amount, user_id))
+        await db.commit()
+
+    @classmethod
+    async def get_inventory(cls, user_id: int) -> list[aiosqlite.Row]:
+        """Fetch entire card inventory collection for a user."""
+        cur = await cls.conn().execute("""
+            SELECT ui.instance_id, r.player_name, r.rating, r.rarity, r.club, r.position 
+            FROM user_inventories ui
+            JOIN card_registry r ON ui.card_id = r.card_id
+            WHERE ui.user_id = ? ORDER BY r.rating DESC
+        """, (user_id,))
+        return await cur.fetchall()
+
+    @classmethod
+    async def add_card_to_inventory(cls, user_id: int, card_id: int) -> None:
+        """Directly insert a card variant straight into user's ledger storage."""
+        db = cls.conn()
+        await db.execute("INSERT INTO user_inventories (user_id, card_id) VALUES (?, ?)", (user_id, card_id))
+        await db.commit()
