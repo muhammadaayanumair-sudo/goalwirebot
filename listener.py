@@ -35,7 +35,11 @@ class GoalwireBot(commands.Bot):
         await FootballAPI.setup()
         print("🔌 FootballAPI session successfully mounted.")
         
-        # ⚙️ 3. Synchronize slash command tree globally
+        # ⚙️ 3. Load Background Task Automation Loop Engine
+        await self.load_extension("tasks")
+        print("⚙️ Background loop task telemetry extensions loaded successfully.")
+        
+        # ⚙️ 4. Synchronize slash command tree globally
         await self.tree.sync()
         print("⚙️ Slash commands synchronized globally!")
 
