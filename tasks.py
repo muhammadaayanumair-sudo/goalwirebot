@@ -107,7 +107,7 @@ class GoalwireTasks(commands.Cog):
 # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
 @tasks.loop(minutes=10)
 async def transfer_news_loop(self):
-   """Pulls recent global player transfers and alerts configured server channels."""
+      """Pulls recent global player transfers and alerts configured server channels."""
         # Ensure 'from datetime import datetime, timezone' is at the top of your file
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         data = await FootballAPI._get("transfers", {"date": today_str})
