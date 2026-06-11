@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 
 # Import custom core modules
 import config
-from config import colours, COMPETITION_IDS
+from config import Colours, COMPETITION_IDS
 from database import Database
 from services.football_api import FootballAPI
 
