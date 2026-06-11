@@ -424,3 +424,24 @@ Guild       : {GUILD_ID}
 
 if __name__ == "__main__":
     main()
+# ══════════════════════════════════════════════════════════════════════════════
+# ── LIVE MATCH AUTOMATION INITIALIZATION ──────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+import logging
+from services.live_tracker_service import LiveTrackerService
+
+log = logging.getLogger("goalwire.startup")
+
+# Note: Replace 'bot' with whatever your Discord client variable is named 
+# (e.g., client, bot, or app)
+@bot.event
+async def on_ready():
+    log.info("🤖 Goalwire successfully connected to Discord as %s", bot.user)
+    
+    # 🚀 Spin up the live match event background engine
+    try:
+        tracker = LiveTrackerService(bot)
+        await tracker.start()
+        log.info("🎯 Real-time match tracking engine has been engaged.")
+    except Exception as exc:
+        log.error("Failed to initialize LiveTrackerService: %s", exc, exc_info=True)
