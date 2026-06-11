@@ -105,10 +105,11 @@ class GoalwireTasks(commands.Cog):
     async def before_live_loop(self):
         await self.bot.wait_until_ready()
 # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
-  @tasks.loop(minutes=10)
+@tasks.loop(minutes=10)
 async def transfer_news_loop(self):
     """Pulls recent global player transfers and alerts configured server channels."""
     try:
+        # Ensure 'from datetime import datetime, timezone' is at the top of your file
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         data = await FootballAPI._get("transfers", {"date": today_str})
         transfers = data.get("response", []) if data else []
@@ -117,14 +118,24 @@ async def transfer_news_loop(self):
             return
 
         for trans in transfers[:5]:
-            player_name = trans["player"]["name"]
+            player = trans.get("player", {})
+            player_name = player.get("name", "Unknown Player")
 
-            for move in trans["transfers"][:1]:
-                transfer_date = move["date"]
-                m_type = move["type"] or "Permanent Deal"
-                teams = move["teams"]
+            for move in trans.get("transfers", [])[:1]:
+                transfer_date = move.get("date")
+                m_type = move.get("type") or "Permanent Deal"
+                teams = move.get("teams", {})
 
-                # Add your logic here
+                # Extract departure and arrival teams safely
+                # Adjust keys ("in"/"out" or "to"/"from") based on your specific API payload
+                team_out = teams.get("out", {}).get("name", "Unknown Club")
+                team_in = teams.get("in", {}).get("name", "Unknown Club")
+
+                # Construct your Discord alert message
+                message = f"⚽ **Transfer Update**\n**Player:** {player_name}\n**Type:** {m_type}\n**From:** {team_out} ➡️ **To:** {team_in}"
+
+                # Add your server channel alerting logic below:
+                # print(message)
 
     except Exception as e:
         log.error("Error in transfer_news_loop: %s", e)
