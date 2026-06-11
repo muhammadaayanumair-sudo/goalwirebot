@@ -6,7 +6,8 @@ Handles 24/7 dynamic slash commands, real-time match stats, and the card economy
 import sys
 import random
 import discord
-from discord import app_commands, Choice
+from discord import app_commands
+from discord.app_commands import Choice
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 
