@@ -11,3 +11,4 @@ requests==2.31.0
 APScheduler==3.10.4
 colorlog==6.8.2
 cachetools==5.3.3
+audioop-lts; python_version >= '3.13'
