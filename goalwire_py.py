@@ -322,8 +322,41 @@ def run_live_mode():
         live = get_live_fixtures(lid)
         for fix in live:
             embed = live_score_embed(fix)
+            
+            # 🎮 Custom Interactive UI Component payload block injection
+            # Adds interactive navigation buttons right through raw API payloads
+            payload = {
+                "embeds": [embed],
+                "components": [
+                    {
+                        "type": 1, # Action Row Component
+                        "components": [
+                            {
+                                "type": 2, # Button Component
+                                "style": 2, # Secondary Grey Button
+                                "label": "📊 Match Tracker",
+                                "custom_id": f"hub_main_{fix['fixture']['id']}",
+                                "disabled": True
+                            },
+                            {
+                                "type": 2,
+                                "style": 1, # Primary Blue Button
+                                "label": "📋 Lineups",
+                                "custom_id": f"hub_lineups_{fix['fixture']['id']}"
+                            },
+                            {
+                                "type": 2,
+                                "style": 3, # Success Green Button
+                                "label": "🔮 Predictions",
+                                "custom_id": f"hub_predictions_{fix['fixture']['id']}"
+                            }
+                        ]
+                    }
+                ]
+            }
+
             if LIVE_CHANNEL_ID:
-                discord_post(f"/channels/{LIVE_CHANNEL_ID}/messages", {"embeds": [embed]})
+                discord_post(f"/channels/{LIVE_CHANNEL_ID}/messages", payload)
             total += 1
             time.sleep(0.5)
     print(f"\n✅ Posted {total} live update(s).")
