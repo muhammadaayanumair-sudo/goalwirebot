@@ -110,21 +110,19 @@ class GoalwireTasks(commands.Cog):
         """Pulls recent global player transfers and alerts configured server channels."""
         try:
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            # Fetch global market actions via API
             data = await FootballAPI._get("transfers", {"date": today_str})
             transfers = data.get("response", []) if data else []
 
             if not transfers:
                 return
 
-            # Process top 5 arrivals
             for trans in transfers[:5]:
                 player_name = trans["player"]["name"]
                 for move in trans["transfers"][:1]:
                     transfer_date = move["date"]
                     m_type = move["type"] or "Permanent Deal"
                     teams = move["teams"]
-                    # Add your logic here to send the Discord embed
+                    # Add your logic here
                     
         except Exception as e:
             log.error("Error in transfer_news_loop: %s", e)
