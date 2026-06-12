@@ -1,4 +1,6 @@
 """
+Goalwire background task loops.
+"""
 
 import asyncio
 import logging
@@ -12,7 +14,6 @@ from database import Database
 from services.football_api import FootballAPI
 
 log = logging.getLogger("goalwire.tasks")
-
 class GoalwireTasks(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -101,10 +102,11 @@ class GoalwireTasks(commands.Cog):
         except Exception as e:
             log.error("Error running live match telemetry sync task loop: %s", e)
 
-    @live_telemetry_loop.before_loop
-    async def before_live_loop(self):
-        await self.bot.wait_until_ready()
- # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
+     @live_telemetry_loop.before_loop
+    async def before_live_loop(self):
+        await self.bot.wait_until_ready()
+
+    # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
     @tasks.loop(minutes=10)
     async def transfer_news_loop(self):
         """Pulls recent global player transfers and alerts configured server channels."""
@@ -129,7 +131,6 @@ class GoalwireTasks(commands.Cog):
                 player_name = player.get("name", "Unknown Player")
 
                 for move in trans.get("transfers", [])[:1]:
-                    transfer_date = move.get("date")
                     m_type = move.get("type") or "Permanent Deal"
                     teams = move.get("teams", {})
 
@@ -146,6 +147,7 @@ class GoalwireTasks(commands.Cog):
                         color=config.Colours.CYAN,
                         timestamp=datetime.now(timezone.utc)
                     )
+
                     await channel.send(embed=embed)
 
         except Exception as e:
