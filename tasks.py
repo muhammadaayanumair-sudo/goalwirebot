@@ -18,15 +18,14 @@ class GoalwireTasks(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # Start our async loop iterations on startup
-        self.live_telemetry_loop.start()
-        self.transfer_news_loop.start()
-        self.kickoff_reminder_loop.start()
+        self.live_telemetry_loop.start()
+        self.transfer_news_loop.start()
+        self.kickoff_reminder_loop.start()
 
-    def cog_unload(self):
-        self.live_telemetry_loop.cancel()
-        self.transfer_news_loop.cancel()
-        self.kickoff_reminder_loop.cancel()
-
+    def cog_unload(self):
+        self.live_telemetry_loop.cancel()
+        self.transfer_news_loop.cancel()
+        self.kickoff_reminder_loop.cancel()
     # ─── 1. LIVE TELEMETRY LOOP (Runs every 60 seconds) ──────────────────────
     @tasks.loop(seconds=60)
     async def live_telemetry_loop(self):
