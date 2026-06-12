@@ -104,37 +104,53 @@ class GoalwireTasks(commands.Cog):
     @live_telemetry_loop.before_loop
     async def before_live_loop(self):
         await self.bot.wait_until_ready()
-# ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
-@tasks.loop(minutes=10)
-async def transfer_news_loop(self):
-      """Pulls recent global player transfers and alerts configured server channels."""
-        # Ensure 'from datetime import datetime, timezone' is at the top of your file
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        data = await FootballAPI._get("transfers", {"date": today_str})
-        transfers = data.get("response", []) if data else []
+ # ─── 2. TRANSFER BREAKING NEWS TASK (Runs every 10 minutes) ─────────────
+    @tasks.loop(minutes=10)
+    async def transfer_news_loop(self):
+        """Pulls recent global player transfers and alerts configured server channels."""
+        try:
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            data = await FootballAPI._get("transfers", {"date": today_str})
+            transfers = data.get("response", []) if data else []
 
-        if not transfers:
-            return
+            if not transfers:
+                return
 
-        for trans in transfers[:5]:
-            player = trans.get("player", {})
-            player_name = player.get("name", "Unknown Player")
+            channel_id = config.TRANSFERS_CHANNEL_ID
+            if not channel_id:
+                return
 
-            for move in trans.get("transfers", [])[:1]:
-                transfer_date = move.get("date")
-                m_type = move.get("type") or "Permanent Deal"
-                teams = move.get("teams", {})
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                return
 
-                # Extract departure and arrival teams safely
-                # Adjust keys ("in"/"out" or "to"/"from") based on your specific API payload
-                team_out = teams.get("out", {}).get("name", "Unknown Club")
-                team_in = teams.get("in", {}).get("name", "Unknown Club")
+            for trans in transfers[:5]:
+                player = trans.get("player", {})
+                player_name = player.get("name", "Unknown Player")
 
-                # Construct your Discord alert message
-                message = f"⚽ **Transfer Update**\n**Player:** {player_name}\n**Type:** {m_type}\n**From:** {team_out} ➡️ **To:** {team_in}"
+                for move in trans.get("transfers", [])[:1]:
+                    transfer_date = move.get("date")
+                    m_type = move.get("type") or "Permanent Deal"
+                    teams = move.get("teams", {})
 
-                # Add your server channel alerting logic below:
-                # print(message)
+                    team_out = teams.get("out", {}).get("name", "Unknown Club")
+                    team_in = teams.get("in", {}).get("name", "Unknown Club")
 
-    except Exception as e:
-        log.error("Error in transfer_news_loop: %s", e)
+                    embed = discord.Embed(
+                        title="🚨 Breaking Transfer News",
+                        description=(
+                            f"**Player:** {player_name}\n"
+                            f"**Type:** {m_type}\n"
+                            f"**From:** {team_out} ➡️ **To:** {team_in}"
+                        ),
+                        color=config.Colours.CYAN,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    await channel.send(embed=embed)
+
+        except Exception as e:
+            log.error("Error in transfer_news_loop: %s", e)
+
+    @transfer_news_loop.before_loop
+    async def before_transfer_loop(self):
+        await self.bot.wait_until_ready()
