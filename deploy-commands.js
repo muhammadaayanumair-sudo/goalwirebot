@@ -14,14 +14,11 @@ for (const file of commandFiles) {
     try {
         const command = require(filePath);
         if ('data' in command && 'execute' in command) {
-            const json = command.data.toJSON(); // This line crashes if desc is missing
-            commands.push(json);
+            commands.push(command.data.toJSON()); 
             console.log(`✅ ${file}`);
-        } else {
-            console.log(`⚠️  ${file}: missing data or execute`);
         }
     } catch (error) {
-        console.error(`\n❌ BROKEN FILE: ${file}`);
+        console.error(`\n❌ BROKEN FILE: ${file}`); // This line tells you which one
         console.error(`Error: ${error.message}\n`);
         process.exit(1);
     }
