@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const api = require('../utils/football');
+const api = require('../utils/footballApi');
 module.exports = {
     data: new SlashCommandBuilder().setName('nextmatch').setDescription('Next match for a team').addStringOption(opt => opt.setName('team').setRequired(true)),
     async execute(interaction) {
