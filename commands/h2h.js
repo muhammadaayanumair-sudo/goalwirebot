@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const api = require('../utils/football');
+const api = require('../utils/footballApi');
 module.exports = {
     data: new SlashCommandBuilder().setName('h2h').setDescription('Head to head record').addStringOption(opt => opt.setName('team1').setRequired(true)).addStringOption(opt => opt.setName('team2').setRequired(true)),
     async execute(interaction) {
