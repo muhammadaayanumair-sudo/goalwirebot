@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const api = require('../utils/football');
+const api = require('../utils/footballApi');
 module.exports = {
     data: new SlashCommandBuilder().setName('injuries').setDescription('Injury list').addStringOption(opt => opt.setName('league').setDescription('PL, CL, BL1').setRequired(false)),
     async execute(interaction) {
