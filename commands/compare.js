@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const api = require('../utils/football');
+const api = require('../utils/footballApi');
 module.exports = {
     data: new SlashCommandBuilder().setName('compare').setDescription('Compare 2 players').addStringOption(opt => opt.setName('p1').setRequired(true)).addStringOption(opt => opt.setName('p2').setRequired(true)),
     async execute(interaction) {
