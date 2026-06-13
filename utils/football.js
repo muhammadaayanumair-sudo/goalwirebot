@@ -1,42 +1,37 @@
 const axios = require('axios');
-
-class APIFootball {
+class FootballAPI {
     constructor() {
-        this.baseURL = 'https://v3.football.api-sports.io';
-        this.headers = { 'x-apisports-key': process.env.API_FOOTBALL_KEY };
+        this.baseURL = 'https://api.football-data.org/v4';
+        this.headers = { 'X-Auth-Token': process.env.FOOTBALL_API_KEY };
+        this.teamCache = new Map();
     }
-
-    async getTransfers(teamId) {
-        const res = await axios.get(`${this.baseURL}/transfers`, {
-            headers: this.headers,
-            params: { team: teamId }
-        });
-        return res.data.response;
-    }
-
-    async getLineups(fixtureId) {
-        const res = await axios.get(`${this.baseURL}/fixtures/lineups`, {
-            headers: this.headers,
-            params: { fixture: fixtureId }
-        });
-        return res.data.response;
-    }
-
-    async getHighlights(leagueId = 39) { // 39 = Premier League
-        const res = await axios.get(`${this.baseURL}/fixtures`, {
-            headers: this.headers,
-            params: { league: leagueId, last: 3 }
-        });
-        return res.data.response;
-    }
-
     async searchTeam(name) {
-        const res = await axios.get(`${this.baseURL}/teams`, {
-            headers: this.headers,
-            params: { search: name }
-        });
-        return res.data.response[0]; // Returns team with ID
+        const teams = { 'manchester united': 66, 'man united': 66, 'man city': 65, 'arsenal': 57, 'chelsea': 61, 'liverpool': 64, 'tottenham': 73, 'barcelona': 81, 'real madrid': 86, 'bayern': 5, 'psg': 524 };
+        return teams[name.toLowerCase()];
+    }
+    async getLiveMatches() {
+        const res = await axios.get(`${this.baseURL}/matches?status=LIVE`, { headers: this.headers });
+        return res.data.matches;
+    }
+    async getTeamFixtures(teamId) {
+        const res = await axios.get(`${this.baseURL}/teams/${teamId}/matches?status=SCHEDULED&limit=5`, { headers: this.headers });
+        return res.data.matches;
+    }
+    async getTeamResults(teamId) {
+        const res = await axios.get(`${this.baseURL}/teams/${teamId}/matches?status=FINISHED&limit=5`, { headers: this.headers });
+        return res.data.matches;
+    }
+    async getTopScorers(leagueCode = 'PL') {
+        const res = await axios.get(`${this.baseURL}/competitions/${leagueCode}/scorers?limit=10`, { headers: this.headers });
+        return res.data.scorers;
+    }
+    async getStandings(leagueCode = 'PL') {
+        const res = await axios.get(`${this.baseURL}/competitions/${leagueCode}/standings`, { headers: this.headers });
+        return res.data.standings[0].table;
+    }
+    async getMatchDetails(matchId) {
+        const res = await axios.get(`${this.baseURL}/matches/${matchId}`, { headers: this.headers });
+        return res.data;
     }
 }
-
-module.exports = new APIFootball();
+module.exports = new FootballAPI();
