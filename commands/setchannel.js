@@ -1,16 +1,20 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const { setChannel } = require('../utils/database');
+
 module.exports = {
     data: new SlashCommandBuilder()
-      .setName('setchannel').setDescription('Set channel for auto football updates').setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-      .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in').addChannelTypes(ChannelType.GuildText).setRequired(true))
-      .addBooleanOption(opt => opt.setName('fixtures').setDescription('Auto post fixtures'))
-      .addBooleanOption(opt => opt.setName('transfers').setDescription('Auto post transfers'))
-      .addBooleanOption(opt => opt.setName('news').setDescription('Auto post news'))
-      .addBooleanOption(opt => opt.setName('topscorers').setDescription('Auto post top scorers'))
-      .addBooleanOption(opt => opt.setName('highlights').setDescription('Auto post highlights'))
-      .addBooleanOption(opt => opt.setName('lineups').setDescription('Auto post lineups'))
-      .addStringOption(opt => opt.setName('league').setDescription('League: PL,CL,BL1,SA,PD')),
+     .setName('setchannel')
+     .setDescription('Set channel for auto football updates')
+     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+     .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in').addChannelTypes(ChannelType.GuildText).setRequired(true))
+     .addBooleanOption(opt => opt.setName('fixtures').setDescription('Auto post fixtures'))
+     .addBooleanOption(opt => opt.setName('news').setDescription('Auto post news'))
+     .addBooleanOption(opt => opt.setName('topscorers').setDescription('Auto post top scorers'))
+     .addBooleanOption(opt => opt.setName('transfers').setDescription('Auto post transfers'))
+     .addBooleanOption(opt => opt.setName('highlights').setDescription('Auto post highlights'))
+     .addBooleanOption(opt => opt.setName('lineups').setDescription('Auto post lineups'))
+     .addStringOption(opt => opt.setName('league').setDescription('League: PL, CL, BL1, SA, PD')),
+
     async execute(interaction) {
         const channel = interaction.options.getChannel('channel');
         const settings = {
@@ -22,10 +26,24 @@ module.exports = {
             lineups: interaction.options.getBoolean('lineups')? 1 : 0,
             league: interaction.options.getString('league') || 'PL'
         };
+
         setChannel(interaction.guildId, channel.id, settings);
-        const enabled = Object.entries(settings).filter(([k, v]) => v === 1 && k!=='league').map(([k]) => `✅ ${k}`).join('\n') || 'None';
-        const embed = new EmbedBuilder().setColor(0x00BFFF).setTitle('✅ Channel Configured').setDescription(`Auto-posting to ${channel}`)
-          .addFields({ name: 'Enabled', value: enabled, inline: true }, { name: 'League', value: settings.league, inline: true });
+
+        const enabled = Object.entries(settings)
+         .filter(([k, v]) => v === 1 && k!== 'league')
+         .map(([k]) => `✅ ${k}`)
+         .join('\n') || 'None selected';
+
+        const embed = new EmbedBuilder()
+         .setColor(0x00BFFF)
+         .setTitle('✅ Auto-Posting Configured')
+         .setDescription(`Goalwire will now post to ${channel}`)
+         .addFields(
+                { name: 'Enabled Feeds', value: enabled, inline: true },
+                { name: 'League', value: settings.league, inline: true }
+            )
+         .setFooter({ text: 'Use /setchannel again to change settings' });
+
         await interaction.reply({ embeds: [embed] });
     }
 };
