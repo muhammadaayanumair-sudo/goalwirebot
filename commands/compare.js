@@ -1,22 +1,26 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const api = require('../utils/footballApi');
+JavaScript
+const { SlashCommandBuilder } = require('discord.js');
 module.exports = {
-    data: new SlashCommandBuilder().setName('compare').setDescription('Compare 2 players').addStringOption(opt => opt.setName('p1').setRequired(true)).addStringOption(opt => opt.setName('p2').setRequired(true)),
-    async execute(interaction) {
-        await interaction.deferReply();
-        const p1 = interaction.options.getString('p1');
-        const p2 = interaction.options.getString('p2');
-        try {
-            const d1 = await api.searchPlayer(p1);
-            const d2 = await api.searchPlayer(p2);
-            if (!d1 ||!d2) return interaction.editReply('One or both players not found');
-            const s1 = d1.statistics[0], s2 = d2.statistics[0];
-            const embed = new EmbedBuilder().setColor(0x00BFFF).setTitle(`⚖️ ${d1.player.name} vs ${d2.player.name}`)
-          .addFields(
-                { name: d1.player.name, value: `Goals: ${s1.goals.total || 0}\nAssists: ${s1.goals.assists || 0}\nRating: ${s1.games.rating || 'N/A'}`, inline: true },
-                { name: d2.player.name, value: `Goals: ${s2.goals.total || 0}\nAssists: ${s2.goals.assists || 0}\nRating: ${s2.games.rating || 'N/A'}`, inline: true }
-            );
-            await interaction.editReply({ embeds: [embed] });
-        } catch (e) { await interaction.editReply('Error - needs API-Football key'); }
-    }
+data: new SlashCommandBuilder()
+.setName('compare')
+.setDescription('Compare stats between two players or teams')
+.addString0ption(option =>
+option.setName('player1')
+.setDescription('First player name, e.g. Haaland') // - Missing this crashes i
+.setRequired(true))
+.addStringOption(option =
+option.setName('player2')
+.setDescription('Second player name, e.g. Mbappe') // - And this one
+.setRequired(true)),
+async execute(interaction) {
+await interaction.deferReply();
+const player1 = interaction.options.getString('player1');
+const player2 = interaction.options.getString('player2');
+try {
+// your API comparison logic here
+await interaction.editReply(`Comparing ${player1} vs ${player2}...`);
+} catch (error) {
+await interaction.editReply('Failed to fetch player data.');
+}
+}
 };
